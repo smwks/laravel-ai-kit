@@ -54,8 +54,10 @@ flags to flip either way.
 - PHP ^8.3
 - Laravel ^12.0 or ^13.0
 - Livewire ^4.1
-- [`laravel/ai`](https://github.com/laravel/ai) ^0.11.0 — still pre-1.0, so its own API
-  may change between releases; pin it deliberately in your own `composer.json`.
+- [`laravel/ai`](https://github.com/laravel/ai) ^1.0.1 (tested against 1.0.1 through 1.3.0). laravel/ai 0.x is no longer
+  supported: 1.0 replaced the `tool_calls` / `tool_results` / `approval_state` message columns with
+  `steps` / `status`. Apps upgrading from 0.11 must run laravel/ai's backfill migration from its
+  [upgrade guide](https://github.com/laravel/ai/blob/1.x/UPGRADE.md) before deploying this version.
 
 ## Prerequisite
 
@@ -457,7 +459,8 @@ pause is resolved.
 Resolving dispatches a fresh turn that resumes the paused one: approved calls run and the
 agent continues; rejected calls are reported back to the model as denied so it can carry on
 without them. Nothing extra is persisted — this builds entirely on `laravel/ai`'s own
-`approval_state` column on the messages table.
+message `status` (`paused`) and the `approval_reason` it stores on each pending tool call. The
+resumed run is folded into the same assistant message the turn paused on.
 
 Resolving an approval is authorized by the same `sendMessage` policy ability as sending a
 message. Each pause and resolution is also recorded as a `tool.approval_requested` /
