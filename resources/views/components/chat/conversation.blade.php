@@ -357,12 +357,23 @@ new class extends Component {
             ->groupBy('turn_id');
 
         $result = collect();
+        $index = -1;
 
-        foreach ($turns as $index => $turn) {
+        foreach ($turns as $turn) {
+            $turnEvents = $eventsByTurn->get($turn->id, collect());
+
+            // A turn that resumes a paused one writes no assistant row of its
+            // own: laravel/ai folds it into the row the turn paused on.
+            $resumesPausedTurn = $index >= 0 && $turnEvents->contains('event_type', 'tool.approval_resolved');
+
+            if (! $resumesPausedTurn) {
+                $index++;
+            }
+
             $assistantMessage = $assistantMessages->get($index);
 
             if ($assistantMessage) {
-                $result->put($assistantMessage->id, $this->reorderEventsForDisplay($eventsByTurn->get($turn->id, collect())));
+                $result->put($assistantMessage->id, $result->get($assistantMessage->id, collect())->concat($this->reorderEventsForDisplay($turnEvents)));
             }
         }
 

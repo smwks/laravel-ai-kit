@@ -323,3 +323,67 @@ it('denies resolving an approval on a conversation the user cannot send to', fun
 
     Bus::assertNotDispatched(ProcessChatMessage::class);
 });
+
+it('groups a resumed turn\'s trace under the assistant row it paused on', function () {
+    [$user, $conversation] = approvalFixture();
+
+    $assistant = pauseTurn($conversation, $user, [[
+        'id' => 'call_1', 'name' => 'ToolA', 'arguments' => [], 'reason' => 'a',
+    ]]);
+
+    $pausedTurn = ConversationTurn::where('conversation_id', $conversation->id)->sole();
+    $pausedTurn->update(['status' => ConversationTurnStatus::Complete]);
+
+    $resumeTurn = ConversationTurn::create([
+        'conversation_id' => $conversation->id,
+        'participant_type' => $user::class,
+        'participant_id' => $user->id,
+        'status' => ConversationTurnStatus::Complete,
+        'created_at' => now()->addSeconds(2),
+    ]);
+
+    $nextTurn = ConversationTurn::create([
+        'conversation_id' => $conversation->id,
+        'participant_type' => $user::class,
+        'participant_id' => $user->id,
+        'status' => ConversationTurnStatus::Complete,
+        'created_at' => now()->addSeconds(3),
+    ]);
+
+    foreach ([
+        [$pausedTurn, 'tool.approval_requested'],
+        [$resumeTurn, 'tool.approval_resolved'],
+        [$nextTurn, 'llm.response'],
+    ] as [$turn, $eventType]) {
+        ConversationEvent::create([
+            'conversation_id' => $conversation->id,
+            'turn_id' => $turn->id,
+            'event_type' => $eventType,
+            'payload' => [],
+        ]);
+    }
+
+    $nextAssistant = ConversationMessage::create([
+        'id' => (string) Str::uuid7(),
+        'conversation_id' => $conversation->id,
+        'participant_type' => $user::class,
+        'participant_id' => $user->id,
+        'agent' => ApprovalToolAgent::class,
+        'role' => 'assistant',
+        'content' => 'Second answer.',
+        'attachments' => [],
+        'steps' => [],
+        'usage' => [],
+        'meta' => [],
+        'status' => MessageStatus::Completed,
+        'created_at' => now()->addSeconds(4),
+        'updated_at' => now()->addSeconds(4),
+    ]);
+
+    $grouped = Livewire::test('ai-kit::components.chat.conversation', ['conversation' => $conversation, 'agent' => EchoAgent::class])
+        ->instance()
+        ->eventsByAssistantMessageId();
+
+    expect($grouped->get($assistant->id)->pluck('event_type')->all())->toBe(['tool.approval_requested', 'tool.approval_resolved'])
+        ->and($grouped->get($nextAssistant->id)->pluck('turn_id')->all())->toBe([$nextTurn->id]);
+});
