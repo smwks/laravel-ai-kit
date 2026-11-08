@@ -204,10 +204,10 @@ it('strips raw script tags and neutralizes unsafe link schemes when rendering as
         'role' => 'assistant',
         'content' => 'Here you go <script>alert(1)</script> and [click me](javascript:alert(1))',
         'attachments' => [],
-        'tool_calls' => [],
-        'tool_results' => [],
+        'steps' => [],
         'usage' => [],
         'meta' => [],
+        'status' => 'completed',
     ]);
 
     $html = Livewire::test('ai-kit::components.chat.conversation', ['conversation' => $conversation, 'agent' => EchoAgent::class])->html();
@@ -230,10 +230,10 @@ it('caches rendered markdown per message id instead of re-parsing on every rende
         'role' => 'assistant',
         'content' => 'first content',
         'attachments' => [],
-        'tool_calls' => [],
-        'tool_results' => [],
+        'steps' => [],
         'usage' => [],
         'meta' => [],
+        'status' => 'completed',
     ]);
 
     Livewire::test('ai-kit::components.chat.conversation', ['conversation' => $conversation, 'agent' => EchoAgent::class])

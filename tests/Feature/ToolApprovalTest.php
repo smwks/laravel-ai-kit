@@ -8,12 +8,13 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Laravel\Ai\Approvals\Decisions;
 use Laravel\Ai\Approvals\PendingApproval;
+use Laravel\Ai\Enums\MessageStatus;
 use Laravel\Ai\Models\Conversation;
 use Laravel\Ai\Models\ConversationMessage;
 use Laravel\Ai\Responses\AgentResponse;
 use Laravel\Ai\Responses\Data\Meta;
 use Laravel\Ai\Responses\Data\ToolCall;
-use Laravel\Ai\Responses\Data\Usage;
+use Laravel\Ai\Responses\Data\TextUsage;
 use Livewire\Livewire;
 use Smwks\LaravelAiKit\Turns\Enums\ConversationTurnStatus;
 use Smwks\LaravelAiKit\Chat\Jobs\ProcessChatMessage;
@@ -69,8 +70,8 @@ function approvalFixture(): array
 
 /**
  * Persist the DB state of a turn paused for approval: a user message, an
- * assistant row carrying the pending tool calls + approval_state, and an
- * AWAITING_APPROVAL turn.
+ * assistant row in the paused status whose tool calls carry an approval_reason
+ * but no result yet, and an AWAITING_APPROVAL turn.
  *
  * @param  array<int, array{id: string, name: string, arguments: array<string, mixed>, reason: string}>  $calls
  */
@@ -87,11 +88,10 @@ function pauseTurn(Conversation $conversation, object $user, array $calls): Conv
         'role' => 'user',
         'content' => 'please do the thing',
         'attachments' => [],
-        'tool_calls' => [],
-        'tool_results' => [],
+        'steps' => [],
         'usage' => [],
         'meta' => [],
-        'approval_state' => null,
+        'status' => MessageStatus::Completed,
         'created_at' => $now,
         'updated_at' => $now,
     ]);
@@ -105,15 +105,21 @@ function pauseTurn(Conversation $conversation, object $user, array $calls): Conv
         'role' => 'assistant',
         'content' => 'I need to run a tool first.',
         'attachments' => [],
-        'tool_calls' => collect($calls)->map(fn ($c) => [
-            'id' => $c['id'],
-            'name' => $c['name'],
-            'arguments' => $c['arguments'],
-        ])->all(),
-        'tool_results' => [],
+        'steps' => [[
+            'content' => 'I need to run a tool first.',
+            'tool_calls' => collect($calls)->map(fn ($c) => [
+                'id' => $c['id'],
+                'name' => $c['name'],
+                'arguments' => $c['arguments'],
+                'approval_reason' => $c['reason'],
+            ])->all(),
+            'reasoning' => '',
+            'replay_blocks' => [],
+            'provider_tool_calls' => [],
+        ]],
         'usage' => [],
         'meta' => [],
-        'approval_state' => ['pending' => collect($calls)->mapWithKeys(fn ($c) => [$c['id'] => $c['reason']])->all()],
+        'status' => MessageStatus::Paused,
         'created_at' => $now->copy()->addSecond(),
         'updated_at' => $now->copy()->addSecond(),
     ]);
@@ -138,7 +144,7 @@ it('ends the turn awaiting approval and records a trace event when the agent pau
         'status' => ConversationTurnStatus::Pending,
     ]);
 
-    $paused = (new AgentResponse('inv-1', '', new Usage, new Meta('openai', 'gpt-x')))
+    $paused = (new AgentResponse('inv-1', '', new TextUsage, new Meta('openai', 'gpt-x')))
         ->withToolCallsAndResults(
             collect([new ToolCall('call_1', 'ApprovalTool', ['value' => 'x'])]),
             collect(),
@@ -162,7 +168,9 @@ it('ends the turn awaiting approval and records a trace event when the agent pau
         ->and($event->payload['approvals'][0]['reason'])->toBe('Confirm this.');
 
     $assistant = $conversation->messages()->where('role', 'assistant')->latest('id')->first();
-    expect($assistant->approval_state['pending'])->toHaveKey('call_1');
+    expect($assistant->status)->toBe(MessageStatus::Paused)
+        ->and($assistant->tool_calls[0]['id'])->toBe('call_1')
+        ->and(PendingApproval::isPending($assistant->tool_calls[0]))->toBeTrue();
 });
 
 it('renders an approve/reject prompt for a paused turn', function () {
@@ -244,34 +252,42 @@ it('does not resolve until every pending call has a decision', function () {
     expect(ConversationTurn::where('conversation_id', $conversation->id)->where('status', ConversationTurnStatus::AwaitingApproval)->count())->toBe(1);
 });
 
-it('hides the prompt once the pending calls have been resolved on a later row', function () {
+it('hides the prompt once the paused turn has been resumed into the same row', function () {
     [$user, $conversation] = approvalFixture();
 
     $assistant = pauseTurn($conversation, $user, [[
         'id' => 'call_1', 'name' => 'ToolA', 'arguments' => [], 'reason' => 'a',
     ]]);
 
-    ConversationMessage::create([
-        'id' => (string) Str::uuid7(),
-        'conversation_id' => $conversation->id,
-        'participant_type' => $user::class,
-        'participant_id' => $user->id,
-        'agent' => ApprovalToolAgent::class,
-        'role' => 'assistant',
+    $steps = $assistant->steps;
+    $steps[0]['tool_calls'][0]['result'] = 'ok';
+    $steps[] = ['content' => 'Done.', 'tool_calls' => [], 'reasoning' => '', 'replay_blocks' => [], 'provider_tool_calls' => []];
+
+    $assistant->update([
         'content' => 'Done.',
-        'attachments' => [],
-        'tool_calls' => [],
-        'tool_results' => [['id' => 'call_1', 'name' => 'ToolA', 'arguments' => [], 'result' => 'ok']],
-        'usage' => [],
-        'meta' => [],
-        'approval_state' => null,
-        'created_at' => $assistant->created_at->copy()->addSecond(),
-        'updated_at' => $assistant->created_at->copy()->addSecond(),
+        'steps' => $steps,
+        'status' => MessageStatus::Completed,
     ]);
 
     Livewire::test('ai-kit::components.chat.conversation', ['conversation' => $conversation, 'agent' => EchoAgent::class])
         ->assertDontSeeHtml('data-ai-kit="approval-request"')
         ->assertSee('Done.');
+});
+
+it('hides the prompt for a paused row whose calls have all been answered', function () {
+    [$user, $conversation] = approvalFixture();
+
+    $assistant = pauseTurn($conversation, $user, [[
+        'id' => 'call_1', 'name' => 'ToolA', 'arguments' => [], 'reason' => 'a',
+    ]]);
+
+    $steps = $assistant->steps;
+    $steps[0]['tool_calls'][0]['result'] = 'ok';
+
+    $assistant->update(['steps' => $steps]);
+
+    Livewire::test('ai-kit::components.chat.conversation', ['conversation' => $conversation, 'agent' => EchoAgent::class])
+        ->assertDontSeeHtml('data-ai-kit="approval-request"');
 });
 
 it('blocks sending a new message while a turn awaits approval', function () {
