@@ -101,14 +101,18 @@ turns/events tables are excluded from that trace.
 
 ### Human tool approval
 
-Builds entirely on `laravel/ai`'s `Approvable` contract and `approval_state` column — nothing extra
-persisted. A tool calling `requireApproval()` pauses the run; the turn ends `AwaitingApproval`. The
-`conversation` component derives `pendingApprovals` (a `#[Computed]`) from the paused assistant
-message's `approval_state['pending']`, minus any call already answered on a later row, and renders
+Builds entirely on `laravel/ai`'s `Approvable` contract and its message `status` / `steps` columns —
+nothing extra persisted. A tool calling `requireApproval()` pauses the run; the turn ends
+`AwaitingApproval`. The `conversation` component derives `pendingApprovals` (a `#[Computed]`) from
+the newest assistant message whose `status` is `MessageStatus::Paused`, taking its tool calls that
+`PendingApproval::isPending()` (an `approval_reason` and no `result` yet), and renders
 inline Approve/Reject (plus Approve/Reject all for multi-call pauses). Resolving marks the paused
 turn `Complete`, creates a fresh `Pending` turn, and dispatches `ProcessChatMessage` with a
 `Laravel\Ai\Approvals\Decisions` as the message (the job's `$message` param is `string|Decisions`).
 Gated by the same `sendMessage` policy ability as sending.
+laravel/ai folds a resumed run into the assistant row it paused on (no new row), so
+`eventsByAssistantMessageId` attaches a turn carrying a `tool.approval_resolved` event to the previous
+turn's assistant message instead of advancing to the next one.
 
 ### Authorization
 

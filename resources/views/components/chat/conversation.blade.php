@@ -5,6 +5,8 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 use Laravel\Ai\Approvals\Decisions;
+use Laravel\Ai\Approvals\PendingApproval;
+use Laravel\Ai\Enums\MessageStatus;
 use Laravel\Ai\Models\Conversation;
 use Laravel\Ai\Models\ConversationMessage;
 use Livewire\Attributes\Computed;
@@ -174,39 +176,32 @@ new class extends Component {
     #[Computed]
     public function pendingApprovals(): ?array
     {
+        // A resumed turn folds its results back into the row it paused on and
+        // leaves the paused status, so only a still-paused row can need a decision.
         $paused = $this->messages
             ->where('role', 'assistant')
-            ->filter(fn (ConversationMessage $message) => filled($message->approval_state['pending'] ?? null))
+            ->filter(fn (ConversationMessage $message) => $message->status === MessageStatus::Paused)
             ->last();
 
         if (! $paused) {
             return null;
         }
 
-        // A call answered on any later row means that pause is already resolved.
-        $resolvedIds = $this->messages
-            ->flatMap(fn (ConversationMessage $message) => collect($message->tool_results ?? [])->pluck('id'))
-            ->filter()
-            ->all();
+        $unresolved = collect($paused->tool_calls)
+            ->filter(fn (array $call) => PendingApproval::isPending($call))
+            ->values();
 
-        $unresolved = array_values(array_diff(
-            array_keys($paused->approval_state['pending']),
-            $resolvedIds,
-        ));
-
-        if ($unresolved === []) {
+        if ($unresolved->isEmpty()) {
             return null;
         }
 
-        $callsById = collect($paused->tool_calls ?? [])->keyBy('id');
-
         return [
             'messageId' => $paused->id,
-            'calls' => collect($unresolved)->map(fn (string $id) => [
-                'id' => $id,
-                'tool' => $callsById[$id]['name'] ?? 'tool',
-                'arguments' => $callsById[$id]['arguments'] ?? [],
-                'reason' => $paused->approval_state['pending'][$id] ?: null,
+            'calls' => $unresolved->map(fn (array $call) => [
+                'id' => $call['id'],
+                'tool' => $call['name'] ?? 'tool',
+                'arguments' => $call['arguments'] ?? [],
+                'reason' => $call['approval_reason'] ?: null,
             ])->all(),
         ];
     }
@@ -362,12 +357,23 @@ new class extends Component {
             ->groupBy('turn_id');
 
         $result = collect();
+        $index = -1;
 
-        foreach ($turns as $index => $turn) {
+        foreach ($turns as $turn) {
+            $turnEvents = $eventsByTurn->get($turn->id, collect());
+
+            // A turn that resumes a paused one writes no assistant row of its
+            // own: laravel/ai folds it into the row the turn paused on.
+            $resumesPausedTurn = $index >= 0 && $turnEvents->contains('event_type', 'tool.approval_resolved');
+
+            if (! $resumesPausedTurn) {
+                $index++;
+            }
+
             $assistantMessage = $assistantMessages->get($index);
 
             if ($assistantMessage) {
-                $result->put($assistantMessage->id, $this->reorderEventsForDisplay($eventsByTurn->get($turn->id, collect())));
+                $result->put($assistantMessage->id, $result->get($assistantMessage->id, collect())->concat($this->reorderEventsForDisplay($turnEvents)));
             }
         }
 

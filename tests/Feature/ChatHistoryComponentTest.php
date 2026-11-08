@@ -95,7 +95,13 @@ it('lists conversations and computes token/model stats from llm events', functio
     ConversationEvent::create([
         'conversation_id' => $conversation->id,
         'event_type' => 'llm.response',
-        'payload' => ['usage' => ['prompt_tokens' => 10, 'completion_tokens' => 5]],
+        'payload' => ['usage' => ['input_tokens' => 10, 'output_tokens' => 5]],
+    ]);
+
+    ConversationEvent::create([
+        'conversation_id' => $conversation->id,
+        'event_type' => 'llm.response',
+        'payload' => ['usage' => ['prompt_tokens' => 3, 'completion_tokens' => 2]],
     ]);
 
     $component = Livewire::test('ai-kit::components.chat.history');
@@ -105,7 +111,7 @@ it('lists conversations and computes token/model stats from llm events', functio
     $stats = $component->instance()->statsFor($conversation);
 
     expect($stats['model'])->toBe('gpt-5-mini');
-    expect($stats['total_tokens'])->toBe(15);
+    expect($stats['total_tokens'])->toBe(20);
 });
 
 it('filters conversations by search term', function () {

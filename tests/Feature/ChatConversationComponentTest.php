@@ -204,10 +204,10 @@ it('strips raw script tags and neutralizes unsafe link schemes when rendering as
         'role' => 'assistant',
         'content' => 'Here you go <script>alert(1)</script> and [click me](javascript:alert(1))',
         'attachments' => [],
-        'tool_calls' => [],
-        'tool_results' => [],
+        'steps' => [],
         'usage' => [],
         'meta' => [],
+        'status' => 'completed',
     ]);
 
     $html = Livewire::test('ai-kit::components.chat.conversation', ['conversation' => $conversation, 'agent' => EchoAgent::class])->html();
@@ -230,10 +230,10 @@ it('caches rendered markdown per message id instead of re-parsing on every rende
         'role' => 'assistant',
         'content' => 'first content',
         'attachments' => [],
-        'tool_calls' => [],
-        'tool_results' => [],
+        'steps' => [],
         'usage' => [],
         'meta' => [],
+        'status' => 'completed',
     ]);
 
     Livewire::test('ai-kit::components.chat.conversation', ['conversation' => $conversation, 'agent' => EchoAgent::class])
@@ -670,6 +670,31 @@ it('renders the new json tree viewer, not the old custom element, on the llm.res
     expect($html)->toContain('placeholder="Search…"');
     expect($html)->not->toContain('<json-viewer');
 });
+
+it('shows input and output token counts on the llm.response detail panel', function (array $usage) {
+    [$user, $conversation] = makeConversationFixture();
+
+    $turn = ConversationTurn::create([
+        'conversation_id' => $conversation->id,
+        'participant_type' => $user::class,
+        'participant_id' => $user->id,
+        'status' => ConversationTurnStatus::Complete,
+    ]);
+
+    $event = ConversationEvent::create([
+        'conversation_id' => $conversation->id,
+        'turn_id' => $turn->id,
+        'event_type' => 'llm.response',
+        'payload' => ['text' => 'hello there', 'usage' => $usage, 'meta' => []],
+    ]);
+
+    Livewire::test('ai-kit::components.chat.conversation', ['conversation' => $conversation, 'agent' => EchoAgent::class])
+        ->call('showDetails', $event->id)
+        ->assertSeeInOrder(['Input tokens', '1234', 'Output tokens', '567']);
+})->with([
+    'laravel/ai 1.x usage keys' => [['input_tokens' => 1234, 'output_tokens' => 567]],
+    'legacy 0.x usage keys' => [['prompt_tokens' => 1234, 'completion_tokens' => 567]],
+]);
 
 it('does not indent llm.request and llm.response, which bracket the whole prompt() call', function () {
     [, $conversation] = makeConversationFixture();
