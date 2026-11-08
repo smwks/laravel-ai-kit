@@ -55,8 +55,11 @@ new class extends Component
             ->whereIn('event_type', ['llm.request', 'llm.response'])
             ->get();
 
+        // laravel/ai 1.x stores input_tokens / output_tokens; events captured under
+        // 0.x still carry prompt_tokens / completion_tokens.
         $totalTokens = (int) $events->where('event_type', 'llm.response')->sum(
-            fn ($event) => ($event->payload['usage']['prompt_tokens'] ?? 0) + ($event->payload['usage']['completion_tokens'] ?? 0)
+            fn ($event) => ($event->payload['usage']['input_tokens'] ?? $event->payload['usage']['prompt_tokens'] ?? 0)
+                + ($event->payload['usage']['output_tokens'] ?? $event->payload['usage']['completion_tokens'] ?? 0)
         );
 
         $model = $events->where('event_type', 'llm.request')->first()?->payload['model'] ?? null;

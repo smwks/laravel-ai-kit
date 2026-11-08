@@ -17,8 +17,8 @@
         <div class="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1 text-sm">
             <span class="text-zinc-400">Provider</span><span class="font-mono">{{ $meta['provider'] ?? '—' }}</span>
             <span class="text-zinc-400">Model</span><span class="font-mono">{{ $meta['model'] ?? '—' }}</span>
-            <span class="text-zinc-400">Prompt tokens</span><span>{{ $usage['prompt_tokens'] ?? 0 }}</span>
-            <span class="text-zinc-400">Completion tokens</span><span>{{ $usage['completion_tokens'] ?? 0 }}</span>
+            <span class="text-zinc-400">Input tokens</span><span>{{ $usage['input_tokens'] ?? $usage['prompt_tokens'] ?? 0 }}</span>
+            <span class="text-zinc-400">Output tokens</span><span>{{ $usage['output_tokens'] ?? $usage['completion_tokens'] ?? 0 }}</span>
             <span class="text-zinc-400">Cache read / write</span><span>{{ $usage['cache_read_input_tokens'] ?? 0 }} / {{ $usage['cache_write_input_tokens'] ?? 0 }}</span>
         </div>
 

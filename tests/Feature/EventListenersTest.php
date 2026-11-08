@@ -39,6 +39,7 @@ it('captures llm.request and llm.response when context holds a conversation id',
     expect($response)->not->toBeNull();
     expect($response->payload['text'])->toBe('Echo: hello');
     expect($response->payload)->toHaveKeys(['usage', 'meta']);
+    expect($response->payload['usage'])->toHaveKeys(['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_write_input_tokens', 'reasoning_tokens']);
 });
 
 it('captures tool.invoked with sql queries made during the tool call', function () {
